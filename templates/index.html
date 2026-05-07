@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Day 02 · Invoice Workbench</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="masthead">
+        <span class="mast-day">DAY · 02</span>
+        <div class="mast-text">
+          <h1 class="mast-title">Invoice <em>Workbench</em></h1>
+          <span class="mast-sub">vision-extracted · arithmetic-validated · de-duplicated</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span class="locator">127.0.0.1<span class="locator-port">:1002</span></span>
+        <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero band: oversized title + live stat ribbon -->
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="hero-text">
+        <span class="hero-eyebrow">Local · Loopback · Vision-powered</span>
+        <h2 class="hero-title">Drop an invoice. Walk away with structured data.</h2>
+        <p class="hero-blurb">
+          Multimodal extraction with line-item maths checks and persistent duplicate detection.
+          PDFs, scans, phone photos. Outputs to CSV and Excel.
+        </p>
+      </div>
+      <dl class="hero-stats" id="hero-stats">
+        <div class="hstat"><dt>Invoices</dt><dd id="stat-invoices">--</dd></div>
+        <div class="hstat"><dt>Cost (USD)</dt><dd id="stat-cost">--</dd></div>
+        <div class="hstat"><dt>Duplicates</dt><dd id="stat-dupes">--</dd></div>
+        <div class="hstat"><dt>Ledger</dt><dd id="stat-ledger">0</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <!-- Two-column workbench: canvas left, control dock right -->
+  <main class="bench">
+
+    <!-- ----- Canvas (left) ----- -->
+    <section class="canvas">
+
+      <!-- Upload zone (visible when src=upload) -->
+      <div id="upload-zone" class="dropzone canvas-dropzone" tabindex="0" role="button" aria-label="Drop files here or click to choose">
+        <div class="dropzone-inner">
+          <span class="dropzone-mark">↧</span>
+          <h2>Drop invoice files</h2>
+          <p>PDF · JPG · PNG · WebP -- max {{ max_upload_mb }} MB each. Click to browse, or paste a screenshot with <kbd>Ctrl</kbd>+<kbd>V</kbd>.</p>
+          <span class="dropzone-meta">Multi-page PDFs are paged; capped at {{ max_pages }} pages.</span>
+        </div>
+        <input type="file" id="file-input" accept=".pdf,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
+        <ul id="file-list" class="file-list"></ul>
+      </div>
+
+      <!-- Bundled samples (visible when src=bundled) -->
+      <div id="bundled-zone" class="dropzone bundled canvas-dropzone" hidden>
+        <div class="dropzone-inner">
+          <span class="dropzone-mark">📦</span>
+          <h2>Bundled samples</h2>
+          <p>Tick which to extract. Defaults to all when none are selected.</p>
+        </div>
+        <div class="sample-bulk">
+          <button type="button" id="samples-all"  class="btn-ghost btn-tight">Select all</button>
+          <button type="button" id="samples-none" class="btn-ghost btn-tight">Clear</button>
+        </div>
+        <ul id="sample-list" class="sample-list">
+          {% for s in samples %}
+          <li>
+            <label class="sample-row">
+              <input type="checkbox" class="sample-check" value="{{ s.id }}" checked>
+              <span class="sample-name">{{ s.filename }}</span>
+              <span class="sample-desc">{{ s.label }}</span>
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+
+      <!-- Empty / loading / error states -->
+      <section id="empty-state" class="state state-empty">
+        <div class="state-mark">↑</div>
+        <p>Pick your source on the right, then hit <strong>Extract</strong>. Or press <kbd>Ctrl</kbd>+<kbd>⏎</kbd> from anywhere.</p>
+      </section>
+
+      <section id="loading-state" class="state state-loading" hidden role="status" aria-live="polite">
+        <div class="loader-ring" aria-hidden="true"></div>
+        <p id="loading-message">Extracting…</p>
+      </section>
+
+      <section id="error-state" class="state state-error" hidden role="alert" aria-live="assertive" tabindex="-1">
+        <strong>Extraction failed</strong>
+        <p id="error-message"></p>
+      </section>
+
+      <!-- Results -->
+      <section id="results" hidden>
+        <div id="results-summary" class="results-summary"></div>
+        <div id="invoice-list" class="invoice-list"></div>
+        <div id="export-strip" class="export-strip" hidden>
+          <div class="export-head">
+            <h3>Export</h3>
+            <p>CSV (one row per line item) · Excel (Invoices · Line items · Summary).</p>
+          </div>
+          <div class="export-actions">
+            <a id="csv-link" class="btn-export" href="#" download>↓ CSV</a>
+            <a id="xlsx-link" class="btn-export btn-export-alt" href="#" download>↓ Excel</a>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ----- Control dock (right, sticky) ----- -->
+    <aside class="dock" aria-label="Run controls">
+
+      <div class="dock-card">
+        <header class="dock-card-head">
+          <span class="dock-num">01</span>
+          <h3>API key</h3>
+        </header>
+        <div class="dock-card-body">
+          {% if env_key_ok %}
+            <div class="spec-status ok"><span>●</span> Loaded from <code>.env</code></div>
+          {% else %}
+            <div class="spec-status warn"><span>●</span> Missing -- paste below or set <code>.env</code></div>
+          {% endif %}
+          <input id="api-key" type="password" placeholder="sk-ant-api03-…  (memory only)" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+
+      <div class="dock-card">
+        <header class="dock-card-head">
+          <span class="dock-num">02</span>
+          <h3>Source</h3>
+        </header>
+        <div class="dock-card-body">
+          <div class="seg" role="tablist">
+            <label class="seg-option">
+              <input type="radio" name="src" value="upload" checked>
+              <span>Upload</span>
+            </label>
+            <label class="seg-option">
+              <input type="radio" name="src" value="bundled">
+              <span>Bundled</span>
+            </label>
+          </div>
+          <span class="dock-hint">Up to {{ max_upload_mb }} MB / file</span>
+        </div>
+      </div>
+
+      <div class="dock-card">
+        <header class="dock-card-head">
+          <span class="dock-num">03</span>
+          <h3>Model</h3>
+        </header>
+        <div class="dock-card-body">
+          <select id="model">
+            <option value="">Default · Haiku 4.5</option>
+            <option value="claude-haiku-4-5-20251001">Haiku 4.5 · ~$0.005/inv</option>
+            <option value="claude-sonnet-4-6">Sonnet 4.6 · ~$0.015</option>
+            <option value="claude-opus-4-7">Opus 4.7 · ~$0.05</option>
+          </select>
+          <label class="check-inline">
+            <input type="checkbox" id="skip-ai">
+            <span>Skip AI (offline run)</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="dock-card dock-action">
+        <button id="extract-btn" class="btn-stamp" type="button">
+          <span class="btn-stamp-line">EXTRACT</span>
+          <span class="btn-stamp-sub">⌃ + ⏎</span>
+        </button>
+        <button id="reset" class="btn-link" type="button" hidden>↺ Reset session</button>
+      </div>
+
+      <div class="dock-foot">
+        <span class="dock-mark">📒</span>
+        <div>
+          <strong>Ledger</strong>
+          <span class="muted" id="ledger-size-line">No invoices recorded yet.</span>
+        </div>
+        <button id="ledger-toggle" class="btn-ghost btn-tight" type="button">View</button>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Ledger panel (full width, below the bench) -->
+  <section id="ledger-panel" class="ledger-panel" hidden>
+    <div class="ledger-head">
+      <h2>Invoice ledger</h2>
+      <div class="ledger-actions">
+        <button id="ledger-refresh" class="btn-ghost" type="button">↻ Refresh</button>
+        <button id="ledger-clear" class="btn-danger" type="button">Clear all</button>
+        <button id="ledger-close" class="btn-ghost" type="button">✕ Close</button>
+      </div>
+    </div>
+    <p class="muted" id="ledger-blurb">
+      Every successful extraction is fingerprinted and stored. New uploads are checked against this list; duplicates surface inline on the result cards.
+    </p>
+    <div id="ledger-body"></div>
+  </section>
+
+  <footer class="page-footer">
+    <span>30-Day Finance &amp; Accounting Project · Day 02</span>
+    <span class="dot">·</span>
+    <span>runs on your machine only · loopback bound</span>
+  </footer>
+
+  <!-- Page-wide drag overlay -->
+  <div id="page-drop-overlay" class="page-drop-overlay" hidden aria-hidden="true">
+    <div class="page-drop-card">
+      <div class="page-drop-mark">↓</div>
+      <h2>Drop to extract</h2>
+      <p>Release anywhere on the page · we'll route the files to the canvas.</p>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>
